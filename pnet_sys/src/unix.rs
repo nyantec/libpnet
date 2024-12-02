@@ -1,11 +1,9 @@
-extern crate libc;
-
 use super::{htons, ntohs};
 use std::io;
 
 pub mod public {
 
-    use super::libc;
+    use libc;
     use super::{htons, ntohs};
     use std::io;
     use std::mem;
@@ -48,7 +46,10 @@ pub mod public {
     pub const IPPROTO_IPV6: libc::c_int = libc::IPPROTO_IPV6;
     pub const IPV6_UNICAST_HOPS: libc::c_int = libc::IPV6_UNICAST_HOPS;
 
-    pub use super::libc::{IFF_BROADCAST, IFF_LOOPBACK, IFF_MULTICAST, IFF_POINTOPOINT, IFF_UP};
+    pub use libc::{IFF_BROADCAST, IFF_LOOPBACK, IFF_RUNNING, IFF_MULTICAST, IFF_POINTOPOINT, IFF_UP};
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub use libc::{IFF_LOWER_UP, IFF_DORMANT};
 
     pub const INVALID_SOCKET: CSocket = -1;
 
@@ -107,10 +108,10 @@ pub mod public {
     }
 
     fn make_in6_addr(segments: [u16; 8]) -> In6Addr {
-        #[allow(deprecated)]
-        let mut val: In6Addr = unsafe { mem::uninitialized() };
-        val.s6_addr = unsafe {
-            mem::transmute([
+        // Safety: We're transmuting an array of ints to an array of ints.
+        // There is no padding involved, and they must be the same size.
+        let s6_addr = unsafe {
+            mem::transmute::<[u16; 8], [u8; 16]>([
                 htons(segments[0]),
                 htons(segments[1]),
                 htons(segments[2]),
@@ -121,7 +122,8 @@ pub mod public {
                 htons(segments[7]),
             ])
         };
-        val
+
+        In6Addr { s6_addr }
     }
 
     pub fn addr_to_sockaddr(addr: SocketAddr, storage: &mut SockAddrStorage) -> SockLen {
@@ -254,9 +256,9 @@ fn errno() -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use duration_to_timespec;
+    use crate::duration_to_timespec;
     use std::time::Duration;
-    use timespec_to_duration;
+    use crate::timespec_to_duration;
 
     #[test]
     fn test_duration_to_timespec() {
