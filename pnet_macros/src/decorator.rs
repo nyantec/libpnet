@@ -15,7 +15,7 @@ use crate::util::{
 use proc_macro2::{Group, Span};
 use quote::{quote, ToTokens};
 use regex::Regex;
-use std::iter::FromIterator;
+use core::iter::FromIterator;
 use syn::{spanned::Spanned, Error};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -67,6 +67,7 @@ impl Packet {
     }
 }
 
+#[inline]
 pub fn generate_packet(
     s: &syn::DataStruct,
     name: String,
@@ -91,6 +92,7 @@ pub fn generate_packet(
     Ok(tts)
 }
 
+#[inline]
 fn generate_packet_struct(packet: &Packet) -> proc_macro2::TokenStream {
     let items = &[
         (packet.packet_name(), "PacketData"),
@@ -115,6 +117,7 @@ fn generate_packet_struct(packet: &Packet) -> proc_macro2::TokenStream {
     }
 }
 
+#[inline]
 fn make_type(ty_str: String, endianness_important: bool) -> Result<Type, String> {
     if let Some((size, endianness, spec)) = parse_ty(&ty_str[..]) {
         if !endianness_important || size <= 8 || spec == EndiannessSpecified::Yes {
@@ -138,6 +141,7 @@ fn make_type(ty_str: String, endianness_important: bool) -> Result<Type, String>
     }
 }
 
+#[inline]
 fn make_packet(s: &syn::DataStruct, name: String) -> Result<Packet, Error> {
     let mut fields = Vec::new();
     let mut payload_span = None;
@@ -152,7 +156,7 @@ fn make_packet(s: &syn::DataStruct, name: String) -> Result<Packet, Error> {
                 ));
             }
         };
-        let mut construct_with = Vec::new();
+        let mut construct_with = None;
         let mut is_payload = false;
         let mut packet_length = None;
         let mut struct_length = None;
@@ -228,6 +232,7 @@ fn make_packet(s: &syn::DataStruct, name: String) -> Result<Packet, Error> {
                 syn::Meta::List(ref l) => {
                     if let Some(ident) = l.path.get_ident() {
                         if ident == "construct_with" {
+                            let mut some_construct_with = Vec::new();
                             if l.nested.is_empty() {
                                 return Err(Error::new(
                                     l.path.span(),
@@ -239,7 +244,7 @@ fn make_packet(s: &syn::DataStruct, name: String) -> Result<Packet, Error> {
                                 if let syn::NestedMeta::Meta(ref meta) = item {
                                     let ty_str = meta.to_token_stream().to_string();
                                     match make_type(ty_str, false) {
-                                        Ok(ty) => construct_with.push(ty),
+                                        Ok(ty) => some_construct_with.push(ty),
                                         Err(e) => {
                                             return Err(Error::new(
                                                 field.ty.span(),
@@ -256,6 +261,7 @@ fn make_packet(s: &syn::DataStruct, name: String) -> Result<Packet, Error> {
                                     ));
                                 }
                             }
+                            construct_with = Some(some_construct_with);
                         } else {
                             return Err(Error::new(
                                 ident.span(),
@@ -281,7 +287,30 @@ fn make_packet(s: &syn::DataStruct, name: String) -> Result<Packet, Error> {
 
         match ty {
             Type::Vector(_) => {
-                struct_length = Some(format!("_packet.{}.len()", field_name).to_owned());
+                struct_length = if let Some(construct_with) = construct_with.as_ref() {
+                    let mut inner_size = 0;
+                    for arg in construct_with.iter() {
+                        if let Type::Primitive(ref _ty_str, size, _endianness) = *arg {
+                            inner_size += size;
+                        } else {
+                            return Err(Error::new(
+                                    field.span(),
+                                    "arguments to #[construct_with] must be primitives",
+                                    ));
+                        }
+                    }
+                    if inner_size % 8 != 0 {
+                        return Err(Error::new(
+                                field.span(),
+                                "types in #[construct_with] for vec must be add up to a multiple of 8 bits",
+                                ));
+                    }
+                    inner_size /= 8; // bytes not bits
+
+                    Some(format!("_packet.{}.len() * {}", field_name, inner_size).to_owned())
+                } else {
+                    Some(format!("_packet.{}.len()", field_name).to_owned())
+                };
                 if !is_payload && packet_length.is_none() {
                     return Err(Error::new(
                         field.ty.span(),
@@ -291,7 +320,7 @@ fn make_packet(s: &syn::DataStruct, name: String) -> Result<Packet, Error> {
                 }
             }
             Type::Misc(_) => {
-                if construct_with.is_empty() {
+                if construct_with.is_none() {
                     return Err(Error::new(
                         field.ty.span(),
                         "non-primitive field types must specify #[construct_with]",
@@ -308,7 +337,7 @@ fn make_packet(s: &syn::DataStruct, name: String) -> Result<Packet, Error> {
             packet_length,
             struct_length,
             is_payload,
-            construct_with: Some(construct_with),
+            construct_with,
         });
     }
 
@@ -326,6 +355,7 @@ fn make_packet(s: &syn::DataStruct, name: String) -> Result<Packet, Error> {
 }
 
 /// Return the processed length expression for a packet.
+#[inline]
 fn parse_length_expr(
     tts: &[proc_macro2::TokenTree],
     field_names: &[String],
@@ -398,6 +428,7 @@ fn parse_length_expr(
     Ok(tokens_packet)
 }
 
+#[inline]
 fn generate_packet_impl(
     packet: &Packet,
     mutable: bool,
@@ -459,9 +490,16 @@ fn generate_packet_impl(
                         [..];
                 bit_offset += size;
             }
-            Type::Vector(ref inner_ty) => {
-                handle_vector_field(&field, &mut accessors, &mut mutators, inner_ty, &mut co)?
-            }
+            Type::Vector(ref inner_ty) => handle_vector_field(
+                &field,
+                &mut bit_offset,
+                &offset_fns_packet[..],
+                &mut co,
+                &name,
+                &mut mutators,
+                &mut accessors,
+                inner_ty,
+            )?,
             Type::Misc(ref ty_str) => handle_misc_field(
                 &field,
                 &mut bit_offset,
@@ -612,6 +650,7 @@ fn generate_packet_impl(
     ))
 }
 
+#[inline]
 fn generate_packet_impls(
     packet: &Packet,
 ) -> Result<(proc_macro2::TokenStream, PayloadBounds, String), Error> {
@@ -631,6 +670,7 @@ fn generate_packet_impls(
         .ok_or_else(|| Error::new(Span::call_site(), "generate_packet_impls failed"))
 }
 
+#[inline]
 fn generate_packet_size_impls(
     packet: &Packet,
     size: &str,
@@ -658,6 +698,7 @@ fn generate_packet_size_impls(
     Ok(quote! { #(#tts)* })
 }
 
+#[inline]
 fn generate_packet_trait_impls(
     packet: &Packet,
     payload_bounds: &PayloadBounds,
@@ -680,7 +721,7 @@ fn generate_packet_trait_impls(
             if !payload_bounds.upper.is_empty() {
                 pre = pre
                     + &format!(
-                        "let end = ::std::cmp::min({}, _self.packet.len());",
+                        "let end = ::core::cmp::min({}, _self.packet.len());",
                         payload_bounds.upper
                     )[..];
                 end = "end".to_owned();
@@ -716,6 +757,7 @@ fn generate_packet_trait_impls(
     Ok(quote! { #(#tts)* })
 }
 
+#[inline]
 fn generate_iterables(packet: &Packet) -> Result<proc_macro2::TokenStream, Error> {
     let name = &packet.base_name;
 
@@ -736,7 +778,7 @@ fn generate_iterables(packet: &Packet) -> Result<proc_macro2::TokenStream, Error
 
         fn next(&mut self) -> Option<{name}Packet<'a>> {{
             use pnet_macros_support::packet::PacketSize;
-            use std::cmp::min;
+            use core::cmp::min;
             if self.buf.len() > 0 {{
                 if let Some(ret) = {name}Packet::new(self.buf) {{
                     let start = min(ret.packet_size(), self.buf.len());
@@ -763,6 +805,7 @@ fn generate_iterables(packet: &Packet) -> Result<proc_macro2::TokenStream, Error
     })
 }
 
+#[inline]
 fn generate_converters(packet: &Packet) -> Result<proc_macro2::TokenStream, Error> {
     let get_fields = generate_get_fields(packet);
 
@@ -793,6 +836,7 @@ fn generate_converters(packet: &Packet) -> Result<proc_macro2::TokenStream, Erro
     Ok(quote! { #(#tts)* })
 }
 
+#[inline]
 fn generate_debug_impls(packet: &Packet) -> Result<proc_macro2::TokenStream, Error> {
     let mut field_fmt_str = String::new();
     let mut get_fields = String::new();
@@ -809,9 +853,9 @@ fn generate_debug_impls(packet: &Packet) -> Result<proc_macro2::TokenStream, Err
         .map(|packet| {
             let s = format!(
                 "
-        impl<'p> ::std::fmt::Debug for {packet}<'p> {{
+        impl<'p> ::core::fmt::Debug for {packet}<'p> {{
             #[cfg_attr(feature = \"clippy\", allow(used_underscore_binding))]
-            fn fmt(&self, fmt: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {{
+            fn fmt(&self, fmt: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {{
                 let _self = self;
                 write!(fmt,
                        \"{packet} {{{{ {field_fmt_str} }}}}\"
@@ -830,6 +874,7 @@ fn generate_debug_impls(packet: &Packet) -> Result<proc_macro2::TokenStream, Err
     Ok(quote! { #(#tts)* })
 }
 
+#[inline]
 fn handle_misc_field(
     field: &Field,
     bit_offset: &mut usize,
@@ -948,6 +993,7 @@ fn handle_misc_field(
     Ok(())
 }
 
+#[inline]
 fn handle_vec_primitive(
     inner_ty_str: &str,
     size: usize,
@@ -966,7 +1012,7 @@ fn handle_vec_primitive(
                                     #[allow(trivial_numeric_casts, unused_parens, unused_braces)]
                                     #[cfg_attr(feature = \"clippy\", allow(used_underscore_binding))]
                                     pub fn get_{name}(&self) -> Vec<{inner_ty_str}> {{
-                                        use std::cmp::min;
+                                        use core::cmp::min;
                                         let _self = self;
                                         let current_offset = {co};
                                         let pkt_len = self.packet.len();
@@ -1056,12 +1102,16 @@ fn handle_vec_primitive(
     }
 }
 
+#[inline]
 fn handle_vector_field(
     field: &Field,
-    accessors: &mut String,
-    mutators: &mut String,
-    inner_ty: &Box<Type>,
+    bit_offset: &mut usize,
+    offset_fns: &[String],
     co: &mut String,
+    name: &str,
+    mutators: &mut String,
+    accessors: &mut String,
+    inner_ty: &Box<Type>,
 ) -> Result<(), Error> {
     if !field.is_payload && !field.packet_length.is_some() {
         return Err(Error::new(
@@ -1076,7 +1126,7 @@ fn handle_vector_field(
                                 #[allow(trivial_numeric_casts)]
                                 #[cfg_attr(feature = \"clippy\", allow(used_underscore_binding))]
                                 pub fn get_{name}_raw(&self) -> &[u8] {{
-                                    use std::cmp::min;
+                                    use core::cmp::min;
                                     let _self = self;
                                     let current_offset = {co};
                                     let end = min(current_offset + {packet_length}, _self.packet.len());
@@ -1094,7 +1144,7 @@ fn handle_vector_field(
                                 #[allow(trivial_numeric_casts)]
                                 #[cfg_attr(feature = \"clippy\", allow(used_underscore_binding))]
                                 pub fn get_{name}_raw_mut(&mut self) -> &mut [u8] {{
-                                    use std::cmp::min;
+                                    use core::cmp::min;
                                     let _self = self;
                                     let current_offset = {co};
                                     let end = min(current_offset + {packet_length}, _self.packet.len());
@@ -1118,6 +1168,132 @@ fn handle_vector_field(
             ));
         }
         Type::Misc(ref inner_ty_str) => {
+            if let Some(construct_with) = field.construct_with.as_ref() {
+                let mut inner_accessors = String::new();
+                let mut inner_mutators = String::new();
+                let mut get_args = String::new();
+                let mut set_args = String::new();
+                let mut inner_size = 0;
+                for (i, arg) in construct_with.iter().enumerate() {
+                    if let Type::Primitive(ref ty_str, size, endianness) = *arg {
+                        let mut ops = operations(*bit_offset % 8, size).unwrap();
+                        let target_endianness = if cfg!(target_endian = "little") {
+                            Endianness::Little
+                        } else {
+                            Endianness::Big
+                        };
+
+                        if endianness == Endianness::Little
+                            || (target_endianness == Endianness::Little
+                                && endianness == Endianness::Host)
+                        {
+                            ops = to_little_endian(ops);
+                        }
+
+                        inner_size += size;
+                        let arg_name = format!("arg{}", i);
+                        inner_accessors = inner_accessors
+                            + &generate_accessor_with_offset_str(
+                                &arg_name[..],
+                                &ty_str[..],
+                                &co[..],
+                                &ops[..],
+                                &name[..],
+                            )[..];
+                        inner_mutators = inner_mutators
+                            + &generate_mutator_with_offset_str(
+                                &arg_name[..],
+                                &ty_str[..],
+                                &co[..],
+                                &to_mutator(&ops[..])[..],
+                                &name[..],
+                            )[..];
+                        get_args =
+                            format!("{}get_{}(&self, additional_offset), ", get_args, arg_name);
+                        set_args = format!(
+                            "{}set_{}(_self, vals.{}, additional_offset);\n",
+                            set_args, arg_name, i
+                        );
+                        *bit_offset += size;
+                        // Current offset needs to be recalculated for each arg
+                        *co = current_offset(*bit_offset, offset_fns);
+                    } else {
+                        return Err(Error::new(
+                            field.span,
+                            "arguments to #[construct_with] must be primitives",
+                        ));
+                    }
+                }
+                if inner_size % 8 != 0 {
+                    return Err(Error::new(
+                        field.span,
+                        "types in #[construct_with] for vec must be add up to a multiple of 8 bits",
+                    ));
+                }
+                inner_size /= 8; // bytes not bits
+                *mutators = format!(
+                    "{mutators}
+                /// Set the value of the {name} field.
+                #[inline]
+                #[allow(trivial_numeric_casts)]
+                #[cfg_attr(feature = \"clippy\", allow(used_underscore_binding))]
+                pub fn set_{name}(&mut self, vals: &Vec<{inner_ty_str}>) {{
+                    use pnet_macros_support::packet::PrimitiveValues;
+                    let _self = self;
+                    {inner_mutators}
+                    let mut additional_offset = 0;
+
+                    for val in vals.into_iter() {{
+                        let vals = val.to_primitive_values();
+
+                        {set_args}
+
+                        additional_offset += {inner_size};
+                    }}
+                }}
+                ",
+                    mutators = &mutators[..],
+                    name = field.name,
+                    inner_ty_str = inner_ty_str,
+                    inner_mutators = inner_mutators,
+                    //packet_length = field.packet_length.as_ref().unwrap(),
+                    inner_size = inner_size,
+                    set_args = set_args
+                );
+                *accessors = format!(
+                    "{accessors}
+                    /// Get the value of the {name} field
+                    #[inline]
+                    #[allow(trivial_numeric_casts)]
+                    #[cfg_attr(feature = \"clippy\", allow(used_underscore_binding))]
+                    pub fn get_{name}(&self) -> Vec<{inner_ty_str}> {{
+                        let _self = self;
+                        let length = {packet_length};
+                        let vec_length = length.saturating_div({inner_size});
+                        let mut vec = Vec::with_capacity(vec_length);
+
+                        {inner_accessors}
+
+                        let mut additional_offset = 0;
+
+                        for vec_offset in 0..vec_length {{
+                            vec.push({inner_ty_str}::new({get_args}));
+                            additional_offset += {inner_size};
+                        }}
+
+                        vec
+                    }}
+                    ",
+                    accessors = accessors,
+                    name = field.name,
+                    inner_ty_str = inner_ty_str,
+                    inner_accessors = inner_accessors,
+                    packet_length = field.packet_length.as_ref().unwrap(),
+                    inner_size = inner_size,
+                    get_args = &get_args[..get_args.len() - 2]
+                );
+                return Ok(());
+            }
             *accessors = format!("{accessors}
                                 /// Get the value of the {name} field (copies contents)
                                 #[inline]
@@ -1125,7 +1301,7 @@ fn handle_vector_field(
                                 #[cfg_attr(feature = \"clippy\", allow(used_underscore_binding))]
                                 pub fn get_{name}(&self) -> Vec<{inner_ty_str}> {{
                                     use pnet_macros_support::packet::FromPacket;
-                                    use std::cmp::min;
+                                    use core::cmp::min;
                                     let _self = self;
                                     let current_offset = {co};
                                     let end = min(current_offset + {packet_length}, _self.packet.len());
@@ -1141,7 +1317,7 @@ fn handle_vector_field(
                                 #[allow(trivial_numeric_casts)]
                                 #[cfg_attr(feature = \"clippy\", allow(used_underscore_binding))]
                                 pub fn get_{name}_iter(&self) -> {inner_ty_str}Iterable {{
-                                    use std::cmp::min;
+                                    use core::cmp::min;
                                     let _self = self;
                                     let current_offset = {co};
                                     let end = min(current_offset + {packet_length}, _self.packet.len());
@@ -1358,6 +1534,31 @@ fn generate_mutator_str(
     mutator
 }
 
+fn generate_mutator_with_offset_str(
+    name: &str,
+    ty: &str,
+    offset: &str,
+    operations: &[SetOperation],
+    inner: &str,
+) -> String {
+    let op_strings = generate_sop_strings(operations);
+
+    format!(
+        "#[inline]
+    #[allow(trivial_numeric_casts)]
+    #[cfg_attr(feature = \"clippy\", allow(used_underscore_binding))]
+    fn set_{name}(_self: &mut {struct_name}, val: {ty}, offset: usize) {{
+        let co = {co} + offset;
+        {operations}
+    }}",
+        struct_name = inner,
+        name = name,
+        ty = ty,
+        co = offset,
+        operations = op_strings
+    )
+}
+
 /// Used to turn something like a u16be into
 /// "let b0 = ((_self.packet[co + 0] as u16be) << 8) as u16be;
 ///  let b1 = ((_self.packet[co + 1] as u16be) as u16be;
@@ -1428,6 +1629,7 @@ fn test_generate_accessor_op_str() {
 
 /// Given the name of a field, and a set of operations required to get the value of that field,
 /// return the Rust code required to get the field.
+#[inline]
 fn generate_accessor_str(
     name: &str,
     ty: &str,
@@ -1475,6 +1677,33 @@ fn generate_accessor_str(
     accessor
 }
 
+#[inline]
+fn generate_accessor_with_offset_str(
+    name: &str,
+    ty: &str,
+    offset: &str,
+    operations: &[GetOperation],
+    inner: &str,
+) -> String {
+    let op_strings = generate_accessor_op_str("_self.packet", ty, operations);
+
+    format!(
+        "#[inline(always)]
+    #[allow(trivial_numeric_casts, unused_parens)]
+    #[cfg_attr(feature = \"clippy\", allow(used_underscore_binding))]
+    fn get_{name}(_self: &{struct_name}, offset: usize) -> {ty} {{
+        let co = {co} + offset;
+        {operations}
+    }}",
+        struct_name = inner,
+        name = name,
+        ty = ty,
+        co = offset,
+        operations = op_strings
+    )
+}
+
+#[inline]
 fn current_offset(bit_offset: usize, offset_fns: &[String]) -> String {
     let base_offset = bit_offset / 8;
 
@@ -1483,6 +1712,7 @@ fn current_offset(bit_offset: usize, offset_fns: &[String]) -> String {
         .fold(base_offset.to_string(), |a, b| a + " + " + &b[..])
 }
 
+#[inline]
 fn generate_get_fields(packet: &Packet) -> String {
     let mut gets = String::new();
 

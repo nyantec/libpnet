@@ -10,7 +10,9 @@
 
 use crate::PrimitiveValues;
 
-use std::fmt;
+use alloc::vec::Vec;
+use core::fmt;
+
 use pnet_base::MacAddr;
 use pnet_macros::packet;
 
@@ -52,7 +54,7 @@ fn ethernet_header_test() {
 }
 
 /// `EtherTypes` are defined at:
-/// http://www.iana.org/assignments/ieee-802-numbers/ieee-802-numbers.xhtml.
+/// <http://www.iana.org/assignments/ieee-802-numbers/ieee-802-numbers.xhtml>.
 /// These values should be used in the `Ethernet` `EtherType` field.
 ///
 /// FIXME Should include all
@@ -161,8 +163,10 @@ impl fmt::Display for EtherType {
     }
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn ether_type_to_str() {
+    use std::format;
     let ipv4 = EtherType(0x0800);
     assert_eq!(format!("{}", ipv4), "Ipv4");
     let arp = EtherType(0x0806);
@@ -171,45 +175,3 @@ fn ether_type_to_str() {
     assert_eq!(format!("{}", unknown), "unknown");
 }
 
-#[cfg(all(test, feature = "benchmark"))]
-mod packet_benchmarks {
-    use super::*;
-    use test::{Bencher, black_box};
-
-    use util::MacAddr;
-
-    #[bench]
-    fn bench_packet_new_constructor(b: &mut Bencher) {
-        let buffer = vec![0; 20];
-        b.iter(|| EthernetPacket::new(black_box(&buffer)).unwrap());
-    }
-
-    #[bench]
-    fn bench_packet_get_source(b: &mut Bencher) {
-        let buffer = vec![0; 20];
-        let packet = EthernetPacket::new(&buffer).unwrap();
-        b.iter(|| black_box(packet.get_source()));
-    }
-
-    #[bench]
-    fn bench_packet_set_source_black_box(b: &mut Bencher) {
-        let mut buffer = vec![0; 20];
-        let mut packet = MutableEthernetPacket::new(&mut buffer).unwrap();
-        let mac = MacAddr::new(1, 2, 3, 4, 5, 6);
-        b.iter(|| packet.set_source(black_box(mac)));
-    }
-
-    #[bench]
-    fn bench_packet_mutable_to_immutable(b: &mut Bencher) {
-        let mut buffer = vec![0; 20];
-        let mut packet = MutableEthernetPacket::new(&mut buffer).unwrap();
-        b.iter(|| black_box(packet.to_immutable()));
-    }
-
-    #[bench]
-    fn bench_packet_immutable_to_immutable(b: &mut Bencher) {
-        let mut buffer = vec![0; 20];
-        let mut packet = EthernetPacket::new(&mut buffer).unwrap();
-        b.iter(|| black_box(packet.to_immutable()));
-    }
-}
