@@ -8,6 +8,7 @@
 
 //! Provides interfaces for interacting with packets and headers.
 #![allow(missing_docs)]
+#![deny(warnings)]
 #![no_std]
 #![macro_use]
 
@@ -35,5 +36,7 @@ pub mod tcp;
 pub mod udp;
 pub mod usbpcap;
 pub mod vlan;
+pub mod sll;
+pub mod sll2;
 
 pub mod util;
