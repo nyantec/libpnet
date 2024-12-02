@@ -8,7 +8,14 @@
 
 //! Provides interfaces for interacting with packets and headers.
 #![allow(missing_docs)]
+#![deny(warnings)]
+#![no_std]
 #![macro_use]
+
+extern crate alloc;
+
+#[cfg(test)]
+extern crate std;
 
 extern crate pnet_base;
 extern crate pnet_macros_support;
@@ -17,7 +24,10 @@ extern crate pnet_macros;
 pub use pnet_macros_support::packet::*;
 
 pub mod arp;
+pub mod dhcp;
+pub mod dns;
 pub mod ethernet;
+pub mod flowcontrol;
 pub mod gre;
 pub mod icmp;
 pub mod icmpv6;
@@ -28,5 +38,8 @@ pub mod tcp;
 pub mod udp;
 pub mod usbpcap;
 pub mod vlan;
+pub mod sll;
+pub mod sll2;
+pub mod vxlan;
 
 pub mod util;

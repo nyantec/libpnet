@@ -1,11 +1,9 @@
-extern crate libc;
-
 use super::{htons, ntohs};
 use std::io;
 
 pub mod public {
 
-    use super::libc;
+    use libc;
     use super::{htons, ntohs};
     use std::io;
     use std::mem;
@@ -28,10 +26,24 @@ pub mod public {
     pub type InAddr = libc::in_addr;
     pub type In6Addr = libc::in6_addr;
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "netbsd")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "netbsd"
+    )))]
     pub type TvUsecType = libc::c_long;
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "netbsd"))]
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "netbsd"
+    ))]
     pub type TvUsecType = libc::c_int;
+    #[cfg(not(any(target_os = "illumos", target_os = "solaris")))]
+    pub type InAddrType = libc::c_uint;
+    #[cfg(any(target_os = "illumos", target_os = "solaris"))]
+    pub type InAddrType = libc::c_ulonglong;
 
     pub const AF_INET: libc::c_int = libc::AF_INET;
     pub const AF_INET6: libc::c_int = libc::AF_INET6;
@@ -44,11 +56,16 @@ pub mod public {
     pub const IPPROTO_IP: libc::c_int = libc::IPPROTO_IP;
     pub const IP_HDRINCL: libc::c_int = libc::IP_HDRINCL;
     pub const IP_TTL: libc::c_int = libc::IP_TTL;
+    pub const IP_TOS: libc::c_int = 1;
 
     pub const IPPROTO_IPV6: libc::c_int = libc::IPPROTO_IPV6;
     pub const IPV6_UNICAST_HOPS: libc::c_int = libc::IPV6_UNICAST_HOPS;
+    pub const IPV6_TCLASS: libc::c_int = libc::IPV6_TCLASS;
 
-    pub use super::libc::{IFF_BROADCAST, IFF_LOOPBACK, IFF_MULTICAST, IFF_POINTOPOINT, IFF_UP};
+    pub use libc::{IFF_BROADCAST, IFF_LOOPBACK, IFF_RUNNING, IFF_MULTICAST, IFF_POINTOPOINT, IFF_UP};
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub use libc::{IFF_LOWER_UP, IFF_DORMANT};
 
     pub const INVALID_SOCKET: CSocket = -1;
 
@@ -107,10 +124,10 @@ pub mod public {
     }
 
     fn make_in6_addr(segments: [u16; 8]) -> In6Addr {
-        #[allow(deprecated)]
-        let mut val: In6Addr = unsafe { mem::uninitialized() };
-        val.s6_addr = unsafe {
-            mem::transmute([
+        // Safety: We're transmuting an array of ints to an array of ints.
+        // There is no padding involved, and they must be the same size.
+        let s6_addr = unsafe {
+            mem::transmute::<[u16; 8], [u8; 16]>([
                 htons(segments[0]),
                 htons(segments[1]),
                 htons(segments[2]),
@@ -121,7 +138,8 @@ pub mod public {
                 htons(segments[7]),
             ])
         };
-        val
+
+        In6Addr { s6_addr }
     }
 
     pub fn addr_to_sockaddr(addr: SocketAddr, storage: &mut SockAddrStorage) -> SockLen {
@@ -204,8 +222,8 @@ pub mod public {
 use self::public::*;
 
 #[inline(always)]
-pub fn ipv4_addr(addr: InAddr) -> u32 {
-    (addr.s_addr as u32).to_be()
+pub fn ipv4_addr(addr: InAddr) -> InAddrType {
+    (addr.s_addr as InAddrType).to_be()
 }
 
 #[inline(always)]
@@ -254,9 +272,9 @@ fn errno() -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use duration_to_timespec;
+    use crate::duration_to_timespec;
     use std::time::Duration;
-    use timespec_to_duration;
+    use crate::timespec_to_duration;
 
     #[test]
     fn test_duration_to_timespec() {

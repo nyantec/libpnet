@@ -1,8 +1,10 @@
 //! A Linux cooked-mode capture (LINKTYPE_LINUX_SLL) packet abstraction.
 
-use ethernet::EtherType;
+use alloc::vec::Vec;
+
+use super::ethernet::EtherType;
 use pnet_macros::packet;
-use pnet_macros_support::types::*
+use pnet_macros_support::types::*;
 
 // ref: https://wiki.wireshark.org/SLL
 // ref: https://www.tcpdump.org/linktypes/LINKTYPE_LINUX_SLL.html

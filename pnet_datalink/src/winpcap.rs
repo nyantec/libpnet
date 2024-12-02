@@ -8,14 +8,11 @@
 
 //! Support for sending and receiving data link layer packets using the WinPcap library.
 
-extern crate winapi;
-
 use super::bindings::{bpf, winpcap};
 use super::{DataLinkReceiver, DataLinkSender, MacAddr, NetworkInterface};
 
 use ipnetwork::{ip_mask_to_prefix, IpNetwork};
 
-use self::winapi::ctypes;
 use std::cmp;
 use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
@@ -24,7 +21,9 @@ use std::mem;
 use std::slice;
 use std::str::from_utf8_unchecked;
 use std::sync::Arc;
-use self::winapi::ctypes::c_char;
+use winapi::ctypes::c_char;
+
+use winapi::ctypes;
 
 struct WinPcapAdapter {
     adapter: winpcap::LPADAPTER,
@@ -344,7 +343,7 @@ pub fn interfaces() -> Vec<NetworkInterface> {
         buf.resize(buflen as usize, 0);
 
         // Second call should now work with the correct buffer size. If not, this may be
-        // due to some privilege or other unforseen issue.
+        // due to some privilege or other unforeseen issue.
         if unsafe { winpcap::PacketGetAdapterNames(buf.as_mut_ptr() as *mut i8, &mut buflen) } == 0
         {
             panic!("Unable to get interface list despite increasing buffer size");

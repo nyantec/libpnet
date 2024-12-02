@@ -6,10 +6,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![deny(warnings)]
 extern crate libc;
 
 use std::io;
 use std::mem;
+
+#[cfg(unix)]
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -109,7 +112,7 @@ pub fn set_socket_receive_timeout(socket: CSocket, t: Duration) -> io::Result<()
     }
 }
 
-/// Extracts and returns a timout for reading from the socket.
+/// Extracts and returns a timeout for reading from the socket.
 #[cfg(unix)]
 pub fn get_socket_receive_timeout(socket: CSocket) -> io::Result<Duration> {
     let ts = libc::timeval {
@@ -155,13 +158,13 @@ fn ntohs(u: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use get_socket_receive_timeout;
-    use recv_from;
-    use set_socket_receive_timeout;
+    use crate::get_socket_receive_timeout;
+    use crate::recv_from;
+    use crate::set_socket_receive_timeout;
     use std::mem;
     use std::time::{Duration, Instant};
-    use CSocket;
-    use SockAddrStorage;
+    use crate::CSocket;
+    use crate::SockAddrStorage;
 
     fn test_timeout(socket: CSocket) -> Duration {
         let mut buffer = [0u8; 1024];

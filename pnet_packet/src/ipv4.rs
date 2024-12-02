@@ -8,13 +8,15 @@
 
 //! An IPv4 packet abstraction.
 
-use PrimitiveValues;
-use ip::IpNextHeaderProtocol;
+use crate::PrimitiveValues;
+use crate::ip::IpNextHeaderProtocol;
+
+use alloc::vec::Vec;
 
 use pnet_macros::packet;
 use pnet_macros_support::types::*;
 
-use std::net::Ipv4Addr;
+use pnet_base::core_net::Ipv4Addr;
 
 /// The IPv4 header flags.
 #[allow(non_snake_case)]
@@ -29,7 +31,7 @@ pub mod Ipv4Flags {
 }
 
 /// IPv4 header options numbers as defined in
-/// http://www.iana.org/assignments/ip-parameters/ip-parameters.xhtml
+/// <http://www.iana.org/assignments/ip-parameters/ip-parameters.xhtml>
 #[allow(non_snake_case)]
 #[allow(non_upper_case_globals)]
 pub mod Ipv4OptionNumbers {
@@ -161,8 +163,8 @@ pub struct Ipv4 {
 /// Calculates a checksum of an IPv4 packet header.
 /// The checksum field of the packet is regarded as zeros during the calculation.
 pub fn checksum(packet: &Ipv4Packet) -> u16be {
-    use Packet;
-    use util;
+    use crate::Packet;
+    use crate::util;
 
     let min = Ipv4Packet::minimum_packet_size();
     let max = packet.packet().len();
@@ -178,6 +180,7 @@ pub fn checksum(packet: &Ipv4Packet) -> u16be {
 #[cfg(test)]
 mod checksum_tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn checksum_zeros() {
@@ -288,9 +291,9 @@ fn ipv4_option_payload_length(ipv4_option: &Ipv4OptionPacket) -> usize {
 
 #[test]
 fn ipv4_packet_test() {
-    use ip::IpNextHeaderProtocols;
-    use Packet;
-    use PacketSize;
+    use crate::ip::IpNextHeaderProtocols;
+    use crate::Packet;
+    use crate::PacketSize;
 
     let mut packet = [0u8; 200];
     {
@@ -355,6 +358,7 @@ fn ipv4_packet_test() {
 
 #[test]
 fn ipv4_packet_option_test() {
+    use alloc::vec;
 
     let mut packet = [0u8; 3];
     {
@@ -384,7 +388,7 @@ fn ipv4_packet_option_test() {
 
 #[test]
 fn ipv4_packet_set_payload_test() {
-    use Packet;
+    use crate::Packet;
 
     let mut packet = [0u8; 25]; // allow 20 byte header and 5 byte payload
     let mut ip_packet = MutableIpv4Packet::new(&mut packet[..]).unwrap();

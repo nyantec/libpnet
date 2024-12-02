@@ -8,49 +8,48 @@
 
 //! A TCP packet abstraction.
 
-use Packet;
-use PrimitiveValues;
-use ip::IpNextHeaderProtocols;
+use crate::Packet;
+use crate::PrimitiveValues;
+use crate::ip::IpNextHeaderProtocols;
+
+use alloc::{vec, vec::Vec};
 
 use pnet_macros::packet;
 use pnet_macros_support::types::*;
 
-use std::net::Ipv4Addr;
-use std::net::Ipv6Addr;
-use util::{self, Octets};
+use pnet_base::core_net::Ipv4Addr;
+use pnet_base::core_net::Ipv6Addr;
+use crate::util::{self, Octets};
 
 /// The TCP flags.
 #[allow(non_snake_case)]
 #[allow(non_upper_case_globals)]
 pub mod TcpFlags {
-    use pnet_macros_support::types::*;
-    /// NS – ECN-nonce concealment protection (experimental: see RFC 3540).
-    pub const NS: u9be = 0b100000000;
     /// CWR – Congestion Window Reduced (CWR) flag is set by the sending
     /// host to indicate that it received a TCP segment with the ECE flag set
     /// and had responded in congestion control mechanism (added to header by RFC 3168).
-    pub const CWR: u9be = 0b010000000;
+    pub const CWR: u8 = 0b10000000;
     /// ECE – ECN-Echo has a dual role, depending on the value of the
     /// SYN flag. It indicates:
     /// If the SYN flag is set (1), that the TCP peer is ECN capable.
     /// If the SYN flag is clear (0), that a packet with Congestion Experienced
     /// flag set (ECN=11) in IP header received during normal transmission
     /// (added to header by RFC 3168).
-    pub const ECE: u9be = 0b001000000;
+    pub const ECE: u8 = 0b01000000;
     /// URG – indicates that the Urgent pointer field is significant.
-    pub const URG: u9be = 0b000100000;
+    pub const URG: u8 = 0b00100000;
     /// ACK – indicates that the Acknowledgment field is significant.
     /// All packets after the initial SYN packet sent by the client should have this flag set.
-    pub const ACK: u9be = 0b000010000;
+    pub const ACK: u8 = 0b00010000;
     /// PSH – Push function. Asks to push the buffered data to the receiving application.
-    pub const PSH: u9be = 0b000001000;
+    pub const PSH: u8 = 0b00001000;
     /// RST – Reset the connection.
-    pub const RST: u9be = 0b000000100;
+    pub const RST: u8 = 0b00000100;
     /// SYN – Synchronize sequence numbers. Only the first packet sent from each end
     /// should have this flag set.
-    pub const SYN: u9be = 0b000000010;
+    pub const SYN: u8 = 0b00000010;
     /// FIN – No more data from sender.
-    pub const FIN: u9be = 0b000000001;
+    pub const FIN: u8 = 0b00000001;
 }
 
 /// Represents a TCP packet.
@@ -61,8 +60,8 @@ pub struct Tcp {
     pub sequence: u32be,
     pub acknowledgement: u32be,
     pub data_offset: u4,
-    pub reserved: u3,
-    pub flags: u9be,
+    pub reserved: u4,
+    pub flags: u8,
     pub window: u16be,
     pub checksum: u16be,
     pub urgent_ptr: u16be,
@@ -108,14 +107,13 @@ pub mod TcpOptionNumbers {
 #[packet]
 pub struct TcpOption {
     #[construct_with(u8)]
-    number: TcpOptionNumber,
+    pub number: TcpOptionNumber,
     #[length_fn = "tcp_option_length"]
-    // The length field is an optional field, using a Vec is a way to implement
-    // it
-    length: Vec<u8>,
+    // The length field is an optional field, using a Vec is a way to implement it.
+    pub length: Vec<u8>,
     #[length_fn = "tcp_option_payload_length"]
     #[payload]
-    data: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
 impl TcpOption {
@@ -290,8 +288,8 @@ pub fn ipv6_checksum_adv(packet: &TcpPacket,
 
 #[test]
 fn tcp_header_ipv4_test() {
-    use ip::IpNextHeaderProtocols;
-    use ipv4::MutableIpv4Packet;
+    use crate::ip::IpNextHeaderProtocols;
+    use crate::ipv4::MutableIpv4Packet;
 
     const IPV4_HEADER_LEN: usize = 20;
     const TCP_HEADER_LEN: usize = 32;
@@ -403,6 +401,7 @@ fn tcp_test_options_slice_invalid_offset() {
 
 #[test]
 fn tcp_test_option_invalid_len() {
+    use std::println;
     let mut buf = [0; 24];
     {
         if let Some(mut tcp) = MutableTcpPacket::new(&mut buf[..]) {

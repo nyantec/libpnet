@@ -12,11 +12,8 @@
 extern crate pnet;
 extern crate pnet_datalink;
 
-use pnet::datalink::{self, Config, FanoutOption, FanoutType, NetworkInterface};
-use std::env;
 use std::io::{self, Write};
 use std::process;
-use std::thread;
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -27,6 +24,9 @@ fn main() {
 #[cfg(target_os = "linux")]
 fn main() {
     use pnet::datalink::Channel::Ethernet;
+    use pnet::datalink::{self, Config, FanoutOption, FanoutType, NetworkInterface};
+    use std::env;
+    use std::thread;
 
     let iface_name = match env::args().nth(1) {
         Some(n) => n,
@@ -82,7 +82,7 @@ fn main() {
                 // Create a channel to receive on
                 let (_, mut rx) = match datalink::channel(&itf, config) {
                     Ok(Ethernet(tx, rx)) => (tx, rx),
-                    Ok(_) => panic!("packetdump: unhandled channel type: {}"),
+                    Ok(_) => panic!("packetdump: unhandled channel type"),
                     Err(e) => panic!("packetdump: unable to create channel: {}", e),
                 };
 

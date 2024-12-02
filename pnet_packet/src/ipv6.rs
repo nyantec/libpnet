@@ -8,12 +8,14 @@
 
 //! An IPv6 packet abstraction.
 
-use ip::IpNextHeaderProtocol;
+use crate::ip::IpNextHeaderProtocol;
+
+use alloc::vec::Vec;
 
 use pnet_macros::packet;
 use pnet_macros_support::types::*;
 
-use std::net::Ipv6Addr;
+use pnet_base::core_net::Ipv6Addr;
 
 /// Represents an IPv6 Packet.
 #[packet]
@@ -143,8 +145,9 @@ pub type MutableDestinationPacket<'p> = MutableExtensionPacket<'p>;
 
 #[test]
 fn ipv6_header_test() {
-    use ip::IpNextHeaderProtocols;
-    use {MutablePacket, Packet, PacketSize};
+    use crate::ip::IpNextHeaderProtocols;
+    use crate::{MutablePacket, Packet, PacketSize};
+    use alloc::vec;
 
     let mut packet = [0u8; 0x200];
     {

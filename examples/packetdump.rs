@@ -239,7 +239,7 @@ fn main() {
     // Create a channel to receive on
     let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
         Ok(Ethernet(tx, rx)) => (tx, rx),
-        Ok(_) => panic!("packetdump: unhandled channel type: {}"),
+        Ok(_) => panic!("packetdump: unhandled channel type"),
         Err(e) => panic!("packetdump: unable to create channel: {}", e),
     };
 
@@ -249,7 +249,7 @@ fn main() {
         match rx.next() {
             Ok(packet) => {
                 let payload_offset;
-                if cfg!(any(target_os = "macos", target_os = "ios"))
+                if cfg!(any(target_os = "macos", target_os = "ios", target_os = "tvos"))
                     && interface.is_up()
                     && !interface.is_broadcast()
                     && ((!interface.is_loopback() && interface.is_point_to_point())

@@ -9,11 +9,11 @@
 //! Defines the type and constants for IP next header/next level protocol
 //! fields.
 
-use std::fmt;
-use PrimitiveValues;
+use core::fmt;
+use crate::PrimitiveValues;
 
 /// Protocol numbers as defined at:
-/// http://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml
+/// <http://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml>
 /// Above protocol numbers last updated: 2014-01-16
 /// These values should be used in either the IPv4 Next Level Protocol field
 /// or the IPv6 Next Header field.
@@ -645,6 +645,7 @@ impl fmt::Display for IpNextHeaderProtocol {
 
 #[test]
 fn ip_next_header_protocol_to_str() {
+    use std::format;
     let hopopt = IpNextHeaderProtocol(0);
     assert_eq!(format!("{}", hopopt), "Hopopt");
     let rvd = IpNextHeaderProtocol(66);

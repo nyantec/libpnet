@@ -8,10 +8,12 @@
 
 //! ARP packet abstraction.
 
-use PrimitiveValues;
-use ethernet::EtherType;
+use crate::PrimitiveValues;
+use crate::ethernet::EtherType;
 
-use std::net::Ipv4Addr;
+use alloc::vec::Vec;
+
+use pnet_base::core_net::Ipv4Addr;
 use pnet_base::MacAddr;
 use pnet_macros::packet;
 

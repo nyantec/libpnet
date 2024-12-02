@@ -10,15 +10,13 @@
 
 extern crate libc;
 
-use bindings::linux;
-use {DataLinkReceiver, DataLinkSender, MacAddr, NetworkInterface};
+use crate::bindings::linux;
+use crate::{DataLinkReceiver, DataLinkSender, MacAddr, NetworkInterface};
 
 use pnet_sys;
 
-use std::cmp;
 use std::io;
 use std::mem;
-use std::ptr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -65,6 +63,8 @@ pub struct Config {
 
     /// Promiscuous mode.
     pub promiscuous: bool,
+
+    pub socket_fd: Option<i32>,
 }
 
 impl<'a> From<&'a super::Config> for Config {
@@ -77,6 +77,7 @@ impl<'a> From<&'a super::Config> for Config {
             write_timeout: config.write_timeout,
             fanout: config.linux_fanout,
             promiscuous: config.promiscuous,
+            socket_fd: config.socket_fd,
         }
     }
 }
@@ -91,25 +92,32 @@ impl Default for Config {
             channel_type: super::ChannelType::Layer2,
             fanout: None,
             promiscuous: true,
+            socket_fd: None,
         }
     }
 }
 
 /// Create a data link channel using the Linux's `AF_PACKET` socket type.
 #[inline]
-pub fn channel(network_interface: &NetworkInterface, config: Config) -> io::Result<super::Channel> {
-    let eth_p_all = 0x0003;
-    let (typ, proto) = match config.channel_type {
-        super::ChannelType::Layer2 => (libc::SOCK_RAW, eth_p_all),
-        super::ChannelType::Layer3(proto) => (libc::SOCK_DGRAM, proto),
+pub fn channel(
+    network_interface: &NetworkInterface,
+    config: Config,
+) -> io::Result<super::Channel> {
+    let (_typ, proto) = match config.channel_type {
+        super::ChannelType::Layer2 => (libc::SOCK_RAW, libc::ETH_P_ALL),
+        super::ChannelType::Layer3(proto) => (libc::SOCK_DGRAM, proto as i32),
     };
-    let socket = unsafe { libc::socket(libc::AF_PACKET, typ, proto.to_be() as i32) };
-    if socket == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    let mut addr: libc::sockaddr_storage = unsafe { mem::zeroed() };
-    let len = network_addr_to_sockaddr(network_interface, &mut addr, proto as i32);
 
+    let socket = match config.socket_fd {
+        Some(sock) => sock,
+        None => match unsafe { libc::socket(libc::AF_PACKET, _typ, proto.to_be()) } {
+            -1 => return Err(io::Error::last_os_error()),
+            fd => fd
+        }
+    };
+
+    let mut addr: libc::sockaddr_storage = unsafe { mem::zeroed() };
+    let len = network_addr_to_sockaddr(network_interface, &mut addr, proto);
     let send_addr = (&addr as *const libc::sockaddr_storage) as *const libc::sockaddr;
 
     // Bind to interface
@@ -200,7 +208,6 @@ pub fn channel(network_interface: &NetworkInterface, config: Config) -> io::Resu
     let fd = Arc::new(pnet_sys::FileDesc { fd: socket });
     let sender = Box::new(DataLinkSenderImpl {
         socket: fd.clone(),
-        fd_set: unsafe { mem::zeroed() },
         write_buffer: vec![0; config.write_buffer_size],
         _channel_type: config.channel_type,
         send_addr: unsafe { *(send_addr as *const libc::sockaddr_ll) },
@@ -211,7 +218,6 @@ pub fn channel(network_interface: &NetworkInterface, config: Config) -> io::Resu
     });
     let receiver = Box::new(DataLinkReceiverImpl {
         socket: fd.clone(),
-        fd_set: unsafe { mem::zeroed() },
         read_buffer: vec![0; config.read_buffer_size],
         _channel_type: config.channel_type,
         timeout: config
@@ -224,7 +230,6 @@ pub fn channel(network_interface: &NetworkInterface, config: Config) -> io::Resu
 
 struct DataLinkSenderImpl {
     socket: Arc<pnet_sys::FileDesc>,
-    fd_set: libc::fd_set,
     write_buffer: Vec<u8>,
     _channel_type: super::ChannelType,
     send_addr: libc::sockaddr_ll,
@@ -243,35 +248,40 @@ impl DataLinkSender for DataLinkSenderImpl {
     ) -> Option<io::Result<()>> {
         let len = num_packets * packet_size;
         if len <= self.write_buffer.len() {
-            let min = cmp::min(self.write_buffer[..].len(), len);
+            let min = std::cmp::min(self.write_buffer.len(), len);
             let mut_slice = &mut self.write_buffer;
+
+            let mut pollfd = libc::pollfd {
+                fd: self.socket.fd,
+                events: libc::POLLOUT, // Monitoring for write ability
+                revents: 0, // Will be filled by poll to indicate the events that occurred
+            };
+
+            // Convert timeout to milliseconds as required by poll
+            let timeout_ms = self
+                .timeout
+                .as_ref()
+                .map(|to| (to.tv_sec as i64 * 1000) + (to.tv_nsec as i64 / 1_000_000))
+                .unwrap_or(-1); // -1 means wait indefinitely
+
             for chunk in mut_slice[..min].chunks_mut(packet_size) {
                 func(chunk);
                 let send_addr =
                     (&self.send_addr as *const libc::sockaddr_ll) as *const libc::sockaddr;
 
-                unsafe {
-                    libc::FD_ZERO(&mut self.fd_set as *mut libc::fd_set);
-                    libc::FD_SET(self.socket.fd, &mut self.fd_set as *mut libc::fd_set);
-                }
                 let ret = unsafe {
-                    libc::pselect(
-                        self.socket.fd + 1,
-                        ptr::null_mut(),
-                        &mut self.fd_set as *mut libc::fd_set,
-                        ptr::null_mut(),
-                        self.timeout
-                            .as_ref()
-                            .map(|to| to as *const libc::timespec)
-                            .unwrap_or(ptr::null()),
-                        ptr::null(),
+                    libc::poll(
+                        &mut pollfd as *mut libc::pollfd,
+                        1,
+                        timeout_ms as libc::c_int,
                     )
                 };
+
                 if ret == -1 {
                     return Some(Err(io::Error::last_os_error()));
                 } else if ret == 0 {
                     return Some(Err(io::Error::new(io::ErrorKind::TimedOut, "Timed out")));
-                } else {
+                } else if pollfd.revents & libc::POLLOUT != 0 {
                     if let Err(e) = pnet_sys::send_to(
                         self.socket.fd,
                         chunk,
@@ -280,6 +290,11 @@ impl DataLinkSender for DataLinkSenderImpl {
                     ) {
                         return Some(Err(e));
                     }
+                } else {
+                    return Some(Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "Unexpected poll event",
+                    )));
                 }
             }
 
@@ -291,28 +306,33 @@ impl DataLinkSender for DataLinkSenderImpl {
 
     #[inline]
     fn send_to(&mut self, packet: &[u8], _dst: Option<NetworkInterface>) -> Option<io::Result<()>> {
-        unsafe {
-            libc::FD_ZERO(&mut self.fd_set as *mut libc::fd_set);
-            libc::FD_SET(self.socket.fd, &mut self.fd_set as *mut libc::fd_set);
-        }
+        let mut pollfd = libc::pollfd {
+            fd: self.socket.fd,
+            events: libc::POLLOUT, // Monitoring for write ability
+            revents: 0,            // Will be filled by poll to indicate the events that occurred
+        };
+
+        // Convert timeout to milliseconds as required by poll
+        let timeout_ms = self
+            .timeout
+            .as_ref()
+            .map(|to| (to.tv_sec as i64 * 1000) + (to.tv_nsec as i64 / 1_000_000))
+            .unwrap_or(-1); // -1 means wait indefinitely
+
         let ret = unsafe {
-            libc::pselect(
-                self.socket.fd + 1,
-                ptr::null_mut(),
-                &mut self.fd_set as *mut libc::fd_set,
-                ptr::null_mut(),
-                self.timeout
-                    .as_ref()
-                    .map(|to| to as *const libc::timespec)
-                    .unwrap_or(ptr::null()),
-                ptr::null(),
+            libc::poll(
+                &mut pollfd as *mut libc::pollfd,
+                1,
+                timeout_ms as libc::c_int,
             )
         };
+
         if ret == -1 {
             Some(Err(io::Error::last_os_error()))
         } else if ret == 0 {
             Some(Err(io::Error::new(io::ErrorKind::TimedOut, "Timed out")))
-        } else {
+        } else if pollfd.revents & libc::POLLOUT != 0 {
+            // POLLOUT is set, meaning the socket is ready for writing
             match pnet_sys::send_to(
                 self.socket.fd,
                 packet,
@@ -322,13 +342,17 @@ impl DataLinkSender for DataLinkSenderImpl {
                 Err(e) => Some(Err(e)),
                 Ok(_) => Some(Ok(())),
             }
+        } else {
+            Some(Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Unexpected poll event",
+            )))
         }
     }
 }
 
 struct DataLinkReceiverImpl {
     socket: Arc<pnet_sys::FileDesc>,
-    fd_set: libc::fd_set,
     read_buffer: Vec<u8>,
     _channel_type: super::ChannelType,
     timeout: Option<libc::timespec>,
@@ -337,33 +361,43 @@ struct DataLinkReceiverImpl {
 impl DataLinkReceiver for DataLinkReceiverImpl {
     fn next(&mut self) -> io::Result<&[u8]> {
         let mut caddr: libc::sockaddr_storage = unsafe { mem::zeroed() };
-        unsafe {
-            libc::FD_ZERO(&mut self.fd_set as *mut libc::fd_set);
-            libc::FD_SET(self.socket.fd, &mut self.fd_set as *mut libc::fd_set);
-        }
+        let mut pollfd = libc::pollfd {
+            fd: self.socket.fd,
+            events: libc::POLLIN, // Monitoring for read availability
+            revents: 0,
+        };
+
+        // Convert timeout to milliseconds as required by poll
+        let timeout_ms = self
+            .timeout
+            .as_ref()
+            .map(|to| (to.tv_sec as i64 * 1000) + (to.tv_nsec as i64 / 1_000_000))
+            .unwrap_or(-1); // -1 means wait indefinitely
+
         let ret = unsafe {
-            libc::pselect(
-                self.socket.fd + 1,
-                &mut self.fd_set as *mut libc::fd_set,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                self.timeout
-                    .as_ref()
-                    .map(|to| to as *const libc::timespec)
-                    .unwrap_or(ptr::null()),
-                ptr::null(),
+            libc::poll(
+                &mut pollfd as *mut libc::pollfd,
+                1,
+                timeout_ms as libc::c_int,
             )
         };
+
         if ret == -1 {
             Err(io::Error::last_os_error())
         } else if ret == 0 {
             Err(io::Error::new(io::ErrorKind::TimedOut, "Timed out"))
-        } else {
+        } else if pollfd.revents & libc::POLLIN != 0 {
+            // POLLIN is set, meaning the socket has data to be read
             let res = pnet_sys::recv_from(self.socket.fd, &mut self.read_buffer, &mut caddr);
             match res {
                 Ok(len) => Ok(&self.read_buffer[0..len]),
                 Err(e) => Err(e),
             }
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Unexpected poll event",
+            ))
         }
     }
 }

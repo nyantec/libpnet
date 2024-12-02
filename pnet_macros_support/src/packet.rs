@@ -8,8 +8,11 @@
 
 //! Packet helpers for `pnet_macros`.
 
+extern crate alloc;
+use alloc::vec;
+
+use core::ops::{Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo};
 use pnet_base;
-use std::ops::{Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo};
 
 /// Represents a generic network packet.
 pub trait Packet {
@@ -20,17 +23,42 @@ pub trait Packet {
     fn payload(&self) -> &[u8];
 }
 
+/// Blanket impl for Boxed objects
+impl<T: Packet> Packet for alloc::boxed::Box<T> {
+    /// Retrieve the underlying buffer for the packet.
+    fn packet(&self) -> &[u8] {
+        self.deref().packet()
+    }
+
+    /// Retrieve the payload for the packet.
+    fn payload(&self) -> &[u8] {
+        self.deref().payload()
+    }
+}
+
+impl<T: Packet> Packet for &T {
+    /// Retrieve the underlying buffer for the packet.
+    fn packet(&self) -> &[u8] {
+        (*self).packet()
+    }
+
+    /// Retrieve the payload for the packet.
+    fn payload(&self) -> &[u8] {
+        (*self).payload()
+    }
+}
+
 /// Represents a generic, mutable, network packet.
 pub trait MutablePacket: Packet {
-    /// Retreive the underlying, mutable, buffer for the packet.
+    /// Retrieve the underlying, mutable, buffer for the packet.
     fn packet_mut(&mut self) -> &mut [u8];
 
-    /// Retreive the mutable payload for the packet.
+    /// Retrieve the mutable payload for the packet.
     fn payload_mut(&mut self) -> &mut [u8];
 
     /// Initialize this packet by cloning another.
     fn clone_from<T: Packet>(&mut self, other: &T) {
-        use std::ptr;
+        use core::ptr;
 
         assert!(self.packet().len() >= other.packet().len());
         unsafe {
@@ -64,6 +92,7 @@ macro_rules! impl_index {
         impl<'p> Index<$index_t> for $t<'p> {
             type Output = $output_t;
 
+            #[inline]
             fn index(&self, index: $index_t) -> &$output_t {
                 &self.as_slice().index(index)
             }
@@ -74,6 +103,7 @@ macro_rules! impl_index {
 macro_rules! impl_index_mut {
     ($t:ident, $index_t:ty, $output_t:ty) => {
         impl<'p> IndexMut<$index_t> for $t<'p> {
+            #[inline]
             fn index_mut(&mut self, index: $index_t) -> &mut $output_t {
                 self.as_mut_slice().index_mut(index)
             }
@@ -85,13 +115,14 @@ macro_rules! impl_index_mut {
 #[derive(PartialEq)]
 pub enum PacketData<'p> {
     /// A packet owns its contents.
-    Owned(Vec<u8>),
+    Owned(vec::Vec<u8>),
     /// A packet borrows its contents.
     Borrowed(&'p [u8]),
 }
 
 impl<'p> PacketData<'p> {
     /// Get a slice of the packet data.
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         match self {
             &PacketData::Owned(ref data) => data.deref(),
@@ -100,11 +131,13 @@ impl<'p> PacketData<'p> {
     }
 
     /// No-op - returns `self`.
+    #[inline]
     pub fn to_immutable(self) -> PacketData<'p> {
         self
     }
 
     /// A length of the packet data.
+    #[inline]
     pub fn len(&self) -> usize {
         self.as_slice().len()
     }
@@ -120,13 +153,14 @@ impl_index!(PacketData, RangeFull, [u8]);
 #[derive(PartialEq)]
 pub enum MutPacketData<'p> {
     /// Owned mutable packet data.
-    Owned(Vec<u8>),
+    Owned(vec::Vec<u8>),
     /// Borrowed mutable packet data.
     Borrowed(&'p mut [u8]),
 }
 
 impl<'p> MutPacketData<'p> {
     /// Get packet data as a slice.
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         match self {
             &MutPacketData::Owned(ref data) => data.deref(),
@@ -135,6 +169,7 @@ impl<'p> MutPacketData<'p> {
     }
 
     /// Get packet data as a mutable slice.
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         match self {
             &mut MutPacketData::Owned(ref mut data) => data.deref_mut(),
@@ -143,6 +178,7 @@ impl<'p> MutPacketData<'p> {
     }
 
     /// Get an immutable version of packet data.
+    #[inline]
     pub fn to_immutable(self) -> PacketData<'p> {
         match self {
             MutPacketData::Owned(data) => PacketData::Owned(data),
@@ -151,6 +187,7 @@ impl<'p> MutPacketData<'p> {
     }
 
     /// Get a length of data in the packet.
+    #[inline]
     pub fn len(&self) -> usize {
         self.as_slice().len()
     }
@@ -179,13 +216,15 @@ pub trait PrimitiveValues {
 
 impl PrimitiveValues for pnet_base::MacAddr {
     type T = (u8, u8, u8, u8, u8, u8);
+    #[inline]
     fn to_primitive_values(&self) -> (u8, u8, u8, u8, u8, u8) {
         (self.0, self.1, self.2, self.3, self.4, self.5)
     }
 }
 
-impl PrimitiveValues for ::std::net::Ipv4Addr {
+impl PrimitiveValues for ::pnet_base::core_net::Ipv4Addr {
     type T = (u8, u8, u8, u8);
+    #[inline]
     fn to_primitive_values(&self) -> (u8, u8, u8, u8) {
         let octets = self.octets();
 
@@ -193,8 +232,9 @@ impl PrimitiveValues for ::std::net::Ipv4Addr {
     }
 }
 
-impl PrimitiveValues for ::std::net::Ipv6Addr {
+impl PrimitiveValues for ::pnet_base::core_net::Ipv6Addr {
     type T = (u16, u16, u16, u16, u16, u16, u16, u16);
+    #[inline]
     fn to_primitive_values(&self) -> (u16, u16, u16, u16, u16, u16, u16, u16) {
         let segments = self.segments();
 

@@ -16,6 +16,7 @@
 //! X and FreeBSD, it is impossible to implement protocols which are already
 //! implemented in the kernel such as TCP and UDP.
 
+#![deny(warnings)]
 #![macro_use]
 
 extern crate libc;
@@ -34,10 +35,12 @@ use pnet_packet::Packet;
 
 use std::io;
 use std::io::Error;
+#[cfg(unix)]
 use std::io::ErrorKind;
 use std::mem;
 use std::net::{self, IpAddr};
 use std::sync::Arc;
+#[cfg(unix)]
 use std::time::Duration;
 
 /// Represents a transport layer protocol.
@@ -47,6 +50,29 @@ pub enum TransportProtocol {
     Ipv4(IpNextHeaderProtocol),
     /// Represents a transport protocol built on top of IPv6
     Ipv6(IpNextHeaderProtocol),
+}
+
+#[repr(u8)]
+#[derive(Clone,Copy,Debug,PartialEq)]
+pub enum Ecn {
+    NotEct = 0x0,
+    Ect1 = 0x1,
+    Ect0 = 0x2,
+    CE = 0x3
+}
+
+impl From<u8> for Ecn {
+    fn from(value: u8) -> Ecn {
+        let ecn_bits = value & 0x3;
+        if ecn_bits == Ecn::Ect0 as u8 {
+            return Ecn::Ect0
+        } else if ecn_bits == Ecn::Ect1 as u8 {
+            return Ecn::Ect1
+        } else if ecn_bits == Ecn::CE as u8 {
+            return Ecn::CE
+        }
+        Ecn::NotEct
+    }
 }
 
 /// Type of transport channel to present.
@@ -166,20 +192,20 @@ pub fn transport_channel_with(
     Ok((sender, receiver))
 }
 
-/// Sets a time-to-live for all IP packets sent on the specified socket.
-fn set_socket_ttl(
+/// Sets a socket option whose value is a byte. Close the socket on error.
+fn set_sockopt_u8(
     socket: Arc<pnet_sys::FileDesc>,
     level: libc::c_int,
     name: libc::c_int,
-    ttl: u8,
+    value: u8,
 ) -> io::Result<()> {
-    let ttl = ttl as i32;
+    let value = value as i32;
     let res = unsafe {
         pnet_sys::setsockopt(
             socket.fd,
             level,
             name,
-            (&ttl as *const libc::c_int) as pnet_sys::Buf,
+            (&value as *const libc::c_int) as pnet_sys::Buf,
             mem::size_of::<libc::c_int>() as pnet_sys::SockLen,
         )
     };
@@ -221,18 +247,28 @@ impl TransportSender {
             Layer4(Ipv4(_)) | Layer3(_) => (pnet_sys::IPPROTO_IP, pnet_sys::IP_TTL),
             Layer4(Ipv6(_)) => (pnet_sys::IPPROTO_IPV6, pnet_sys::IPV6_UNICAST_HOPS),
         };
-        set_socket_ttl(self.socket.clone(), level, name, time_to_live)
+        set_sockopt_u8(self.socket.clone(), level, name, time_to_live)
+    }
+
+    /// Sets an ECN marking on the socket, which then applies for all packets sent.
+    #[cfg(unix)]
+    pub fn set_ecn(&mut self, tos: Ecn) -> io::Result<()> {
+        let (level, name) = match self.channel_type {
+            Layer4(Ipv4(_)) | Layer3(_) => (pnet_sys::IPPROTO_IP, pnet_sys::IP_TOS),
+            Layer4(Ipv6(_)) => (pnet_sys::IPPROTO_IPV6, pnet_sys::IPV6_TCLASS),
+        };
+        set_sockopt_u8(self.socket.clone(), level, name, tos as u8)
     }
 
     #[cfg(all(
         not(target_os = "freebsd"),
-        not(any(target_os = "macos", target_os = "ios"))
+        not(any(target_os = "macos", target_os = "ios", target_os = "tvos"))
     ))]
     fn send_to_impl<T: Packet>(&mut self, packet: T, dst: IpAddr) -> io::Result<usize> {
         self.send(packet, dst)
     }
 
-    #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
+    #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios", target_os = "tvos"))]
     fn send_to_impl<T: Packet>(&mut self, packet: T, dst: IpAddr) -> io::Result<usize> {
         use pnet_packet::ipv4::MutableIpv4Packet;
         use pnet_packet::MutablePacket;
@@ -328,7 +364,12 @@ macro_rules! transport_channel_iterator {
                     Err(e) => Err(e),
                 };
 
-                #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
+                #[cfg(any(
+                    target_os = "freebsd",
+                    target_os = "macos",
+                    target_os = "ios",
+                    target_os = "tvos"
+                ))]
                 fn fixup_packet(buffer: &mut [u8]) {
                     use pnet_packet::ipv4::MutableIpv4Packet;
 
@@ -352,7 +393,7 @@ macro_rules! transport_channel_iterator {
 
                 #[cfg(all(
                     not(target_os = "freebsd"),
-                    not(any(target_os = "macos", target_os = "ios"))
+                    not(any(target_os = "macos", target_os = "ios", target_os = "tvos"))
                 ))]
                 fn fixup_packet(_buffer: &mut [u8]) {}
             }

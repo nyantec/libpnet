@@ -8,22 +8,21 @@
 
 //! Support for sending and receiving data link layer packets using the /dev/bpf device.
 
-extern crate libc;
-
-use bindings::bpf;
-use {DataLinkReceiver, DataLinkSender, NetworkInterface};
+use crate::bindings::bpf;
+use crate::{DataLinkReceiver, DataLinkSender, NetworkInterface};
 
 use pnet_sys;
 
 use std::collections::VecDeque;
 use std::ffi::CString;
 use std::io;
-use std::mem;
+use std::mem::{self, align_of};
 use std::ptr;
 use std::sync::Arc;
 use std::time::Duration;
 
 static ETHERNET_HEADER_SIZE: usize = 14;
+static NULL_HEADER_SIZE: usize = 4;
 
 /// The BPF-specific configuration.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -77,24 +76,31 @@ impl Default for Config {
 // NOTE buffer must be word aligned.
 #[inline]
 pub fn channel(network_interface: &NetworkInterface, config: Config) -> io::Result<super::Channel> {
-    #[cfg(any(target_os = "freebsd", target_os = "netbsd"))]
+    #[cfg(any(
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "illumos",
+        target_os = "solaris"
+    ))]
     fn get_fd(_attempts: usize) -> libc::c_int {
+        let c_file_name = CString::new(&b"/dev/bpf"[..]).unwrap();
         unsafe {
             libc::open(
-                CString::new(&b"/dev/bpf"[..]).unwrap().as_ptr(),
+                c_file_name.as_ptr(),
                 libc::O_RDWR,
                 0,
             )
         }
     }
 
-    #[cfg(any(target_os = "openbsd", target_os = "macos", target_os = "ios"))]
+    #[cfg(any(target_os = "openbsd", target_os = "macos", target_os = "ios", target_os = "tvos"))]
     fn get_fd(attempts: usize) -> libc::c_int {
         for i in 0..attempts {
             let fd = unsafe {
                 let file_name = format!("/dev/bpf{}", i);
+                let c_file_name = CString::new(file_name.as_bytes()).unwrap();
                 libc::open(
-                    CString::new(file_name.as_bytes()).unwrap().as_ptr(),
+                    c_file_name.as_ptr(),
                     libc::O_RDWR,
                     0,
                 )
@@ -107,7 +113,12 @@ pub fn channel(network_interface: &NetworkInterface, config: Config) -> io::Resu
         -1
     }
 
-    #[cfg(any(target_os = "freebsd", target_os = "netbsd"))]
+    #[cfg(any(
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "illumos",
+        target_os = "solaris"
+    ))]
     fn set_feedback(fd: libc::c_int) -> io::Result<()> {
         if unsafe { bpf::ioctl(fd, bpf::BIOCFEEDBACK, &1) } == -1 {
             let err = io::Error::last_os_error();
@@ -119,7 +130,7 @@ pub fn channel(network_interface: &NetworkInterface, config: Config) -> io::Resu
         Ok(())
     }
 
-    #[cfg(any(target_os = "macos", target_os = "openbsd", target_os = "ios"))]
+    #[cfg(any(target_os = "macos", target_os = "openbsd", target_os = "ios", target_os = "tvos"))]
     fn set_feedback(_fd: libc::c_int) -> io::Result<()> {
         Ok(())
     }
@@ -130,7 +141,7 @@ pub fn channel(network_interface: &NetworkInterface, config: Config) -> io::Resu
     }
     let mut iface: bpf::ifreq = unsafe { mem::zeroed() };
     for (i, c) in network_interface.name.bytes().enumerate() {
-        iface.ifr_name[i] = c as i8;
+        iface.ifr_name[i] = c as libc::c_char;
     }
 
     let buflen = config.read_buffer_size as libc::c_uint;
@@ -174,14 +185,20 @@ pub fn channel(network_interface: &NetworkInterface, config: Config) -> io::Resu
     }
 
     let mut loopback = false;
+    let mut buffer_offset = 0;
     let mut allocated_read_buffer_size = config.read_buffer_size;
     // The loopback device does weird things
     // FIXME This should really just be another L2 packet header type
     if dlt == bpf::DLT_NULL {
         loopback = true;
-        // So we can guaranatee that we can have a header before the packet.
-        // Loopback packets arrive without the header.
-        allocated_read_buffer_size += ETHERNET_HEADER_SIZE;
+        // The loopback device provides a smaller (4-byte) header than ethernet (14-byte).
+        // We deal with this by offsetting the write buffer, then overwriting the null header
+        // with a zeroed ethernet header. This is complicated by the fact that the buffer
+        // offset must be a multiple of four for pointer alignment, and that the write itself
+        // must be 4096 bytes.
+        let align = align_of::<bpf::bpf_hdr>();
+        buffer_offset = (ETHERNET_HEADER_SIZE - NULL_HEADER_SIZE).next_multiple_of(align);
+        allocated_read_buffer_size += buffer_offset;
 
         // Allow packets to be read back after they are written
         if let Err(e) = set_feedback(fd) {
@@ -225,6 +242,7 @@ pub fn channel(network_interface: &NetworkInterface, config: Config) -> io::Resu
         fd: fd.clone(),
         fd_set: unsafe { mem::zeroed() },
         read_buffer: vec![0; allocated_read_buffer_size],
+        buffer_offset,
         loopback: loopback,
         timeout: config
             .read_timeout
@@ -284,7 +302,7 @@ impl DataLinkSender for DataLinkSenderImpl {
                     )
                 };
                 if ret == -1 {
-                    // Error occured!
+                    // Error occurred!
                     return Some(Err(io::Error::last_os_error()));
                 } else if ret == 0 {
                     return Some(Err(io::Error::new(io::ErrorKind::TimedOut, "Timed out")));
@@ -329,7 +347,7 @@ impl DataLinkSender for DataLinkSenderImpl {
             )
         };
         if ret == -1 {
-            // Error occured!
+            // Error occurred!
             return Some(Err(io::Error::last_os_error()));
         } else if ret == 0 {
             return Some(Err(io::Error::new(io::ErrorKind::TimedOut, "Timed out")));
@@ -352,6 +370,7 @@ struct DataLinkReceiverImpl {
     fd: Arc<pnet_sys::FileDesc>,
     fd_set: libc::fd_set,
     read_buffer: Vec<u8>,
+    buffer_offset: usize,
     loopback: bool,
     timeout: Option<libc::timespec>,
     packets: VecDeque<(usize, usize)>,
@@ -359,15 +378,10 @@ struct DataLinkReceiverImpl {
 
 impl DataLinkReceiver for DataLinkReceiverImpl {
     fn next(&mut self) -> io::Result<&[u8]> {
-        // Loopback packets arrive with a 4 byte header instead of normal ethernet header.
-        // Discard that header and replace with zeroed out ethernet header.
-        let (header_size, buffer_offset) = if self.loopback {
-            (4, ETHERNET_HEADER_SIZE)
-        } else {
-            (0, 0)
-        };
+        let header_size = if self.loopback { NULL_HEADER_SIZE } else { 0 };
+
         if self.packets.is_empty() {
-            let buffer = &mut self.read_buffer[buffer_offset..];
+            let buffer = &mut self.read_buffer[self.buffer_offset..];
             let ret = unsafe {
                 libc::FD_SET(self.fd.fd, &mut self.fd_set as *mut libc::fd_set);
                 libc::pselect(
@@ -415,9 +429,9 @@ impl DataLinkReceiver for DataLinkReceiverImpl {
             }
         }
         let (start, mut len) = self.packets.pop_front().unwrap();
-        len += buffer_offset;
+        len += self.buffer_offset;
         // Zero out part that will become fake ethernet header if on loopback.
-        for i in (&mut self.read_buffer[start..start + buffer_offset]).iter_mut() {
+        for i in (&mut self.read_buffer[start..start + self.buffer_offset]).iter_mut() {
             *i = 0;
         }
         Ok(&self.read_buffer[start..start + len])

@@ -6,8 +6,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![deny(warnings)]
+
+#![cfg_attr(all(not(test), not(feature = "std")), no_std)]
+
 #[cfg(feature = "serde")]
 extern crate serde;
 
 mod macaddr;
-pub use macaddr::*;
+pub use crate::macaddr::*;
+
+pub use no_std_net as core_net;

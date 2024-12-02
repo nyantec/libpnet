@@ -10,7 +10,9 @@
 //! implemented).
 
 #[cfg(test)]
-use Packet;
+use crate::Packet;
+
+use alloc::vec::Vec;
 
 use pnet_macros::packet;
 use pnet_macros_support::types::*;

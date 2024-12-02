@@ -73,10 +73,10 @@
 //!    structures. These include:
 //!      - `pnet::packet::Packet` (`ExamplePacket` and `MutableExamplePacket`)
 //!      - `pnet::packet::MutablePacket` (`MutableExamplePacket` only)
-//!      - `std::fmt::Debug` (`ExamplePacket` and `MutableExamplePacket`)
+//!      - `core::fmt::Debug` (`ExamplePacket` and `MutableExamplePacket`)
 //!      - `pnet::packet::FromPacket` (`ExamplePacket` and `MutableExamplePacket`)
 //!      - `pnet::packet::PacketSize` (`ExamplePacket` and `MutableExamplePacket`)
-//!  * An `ExampleIterator` structure, which implements `std::iter::Iterator`, to allow iterating
+//!  * An `ExampleIterator` structure, which implements `core::iter::Iterator`, to allow iterating
 //!    over vectors of `ExamplePacket` contained within another packet. Used internally.
 //!
 //! ## Attributes
@@ -121,7 +121,7 @@
 //!    If the packet has no payload, you must still specify this attribute, but you can provide a
 //!    `#[length_fn]` attribute returning zero.
 //!
-//!  * \#[construct_with(<primitive type>, ...)]
+//!  * \#[construct_with(\<primitive type>, ...)]
 //!
 //!    Unfortunately, compiler plugins do not currently have access to type information during the
 //!    decoration stage (where all of the above is generated), so this attribute is required. This
@@ -136,9 +136,7 @@
 //!        `#[construct_with(...)]` attribute, and in the `new` method.
 
 #![deny(missing_docs)]
-// #![cfg_attr(feature = "clippy", feature(plugin))]
-// #![cfg_attr(feature = "clippy", plugin(clippy))]
-// #![cfg_attr(feature = "clippy", allow(let_and_return))]
+#![deny(warnings)]
 
 use proc_macro::TokenStream;
 use quote::quote;

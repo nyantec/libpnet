@@ -2,21 +2,28 @@ name: Rust
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
   PNET_FEATURES: travis pcap serde
   PNET_MACROS_FEATURES: travis
+  VERBOSE: 1
 
 jobs:
+  spell-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: crate-ci/typos@master
+
   build-ubuntu:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions/cache@v2
+    - uses: actions/checkout@v3
+    - uses: actions/cache@v3
       with:
         path: |
           ~/.cargo/registry
@@ -33,9 +40,8 @@ jobs:
   build-macos:
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v2
-
-    - uses: actions/cache@v2
+    - uses: actions/checkout@v3
+    - uses: actions/cache@v3
       with:
         path: |
           ~/.cargo/registry
@@ -51,9 +57,9 @@ jobs:
     env:
         RUST_TEST_THREADS: 1
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
-    - uses: actions/cache@v2
+    - uses: actions/cache@v3
       with:
         path: |
           ~/.cargo/registry
