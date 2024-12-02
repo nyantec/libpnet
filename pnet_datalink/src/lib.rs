@@ -56,7 +56,8 @@ pub mod linux;
         target_os = "illumos",
         target_os = "solaris",
         target_os = "macos",
-        target_os = "ios"
+        target_os = "ios",
+        target_os = "tvos"
     )
 ))]
 #[path = "bpf.rs"]
@@ -68,7 +69,8 @@ mod backend;
     target_os = "illumos",
     target_os = "solaris",
     target_os = "macos",
-    target_os = "ios"
+    target_os = "ios",
+    target_os = "tvos"
 ))]
 pub mod bpf;
 
@@ -154,6 +156,9 @@ pub struct Config {
     pub linux_fanout: Option<FanoutOption>,
 
     pub promiscuous: bool,
+
+    /// Linux only: The socket's file descriptor that pnet will use
+    pub socket_fd: Option<i32>,
 }
 
 impl Default for Config {
@@ -167,6 +172,7 @@ impl Default for Config {
             bpf_fd_attempts: 1000,
             linux_fanout: None,
             promiscuous: true,
+            socket_fd: None,
         }
     }
 }
@@ -183,8 +189,14 @@ impl Default for Config {
 /// When matching on the returned channel, make sure to include a catch-all so that code doesn't
 /// break when new channel types are added.
 #[inline]
-pub fn channel(network_interface: &NetworkInterface, configuration: Config) -> io::Result<Channel> {
-    backend::channel(network_interface, (&configuration).into())
+pub fn channel(
+    network_interface: &NetworkInterface,
+    configuration: Config,
+) -> io::Result<Channel> {
+    backend::channel(
+        network_interface,
+        (&configuration).into()
+    )
 }
 
 /// Trait to enable sending `$packet` packets.

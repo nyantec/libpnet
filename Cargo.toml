@@ -1,8 +1,8 @@
 [package]
 name = "pnet"
-version = "0.34.0"
+version = "0.35.0"
 authors = [ "Robert Clipsham <robert@octarineparrot.com>" ]
-license = "MIT/Apache-2.0"
+license = "MIT OR Apache-2.0"
 homepage = "https://github.com/libpnet/libpnet"
 repository = "https://github.com/libpnet/libpnet"
 description = "Cross-platform, low level networking using the Rust programming language."
@@ -25,17 +25,17 @@ default = ["std"]
 [dependencies]
 ipnetwork = { version = "0.20.0", optional = true }
 
-pnet_base = { path = "pnet_base", version = "0.34.0", default-features = false }
-pnet_sys = { path = "pnet_sys", version = "0.34.0", optional = true, default-features = false }
-pnet_datalink = { path = "pnet_datalink", version = "0.34.0", optional = true, default-features = false }
-pnet_transport = { path = "pnet_transport", version = "0.34.0", optional = true, default-features = false }
-pnet_packet = { path = "pnet_packet", version = "0.34.0", default-features = false }
+pnet_base = { path = "pnet_base", version = "0.35.0", default-features = false }
+pnet_sys = { path = "pnet_sys", version = "0.35.0", optional = true, default-features = false }
+pnet_datalink = { path = "pnet_datalink", version = "0.35.0", optional = true, default-features = false }
+pnet_transport = { path = "pnet_transport", version = "0.35.0", optional = true, default-features = false }
+pnet_packet = { path = "pnet_packet", version = "0.35.0", default-features = false }
 
 [dev-dependencies]
 time = "0.3.23"
 
 [[example]]
-name = "arp_packet"
+name = "ip_to_mac"
 required-features = ["std"]
 
 [[example]]

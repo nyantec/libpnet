@@ -8,7 +8,6 @@
 
 #![deny(missing_docs)]
 #![deny(warnings)]
-
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(feature = "nightly", feature(custom_attribute, plugin))]
 #![cfg_attr(feature = "nightly", plugin(pnet_macros_plugin))]
@@ -87,7 +86,7 @@
 //!             Ok(packet) => {
 //!                 let packet = EthernetPacket::new(packet).unwrap();
 //!
-//!                 // Constructs a single packet, the same length as the the one received,
+//!                 // Constructs a single packet, the same length as the one received,
 //!                 // using the provided closure. This allows the packet to be constructed
 //!                 // directly in the write buffer, without copying. If copying is not a
 //!                 // problem, you could also use send_to.
